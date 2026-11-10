@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=FEX 沙箱终端
+Comment=进入 FEX/Wine 环境 shell (wine, winetricks, fex 等命令可用)
+Exec=mate-terminal -e /usr/local/bin/fexshell
+Icon=utilities-terminal
+Terminal=false
+Categories=System;Emulator;

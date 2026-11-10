@@ -1,0 +1,10 @@
+#!/bin/bash
+# 用 FEX-Emu 运行 x86/x86_64 Linux 程序
+kv=$(uname -r | cut -d. -f1-2)
+case "$kv" in
+  2.*|3.*|4.*|5.[0-5])
+    echo "[fex] 注意: 内核 $(uname -r) 缺少 openat2(2)(需 >= 5.6)，FEX 无法用 x86_64 RootFS 加载" >&2
+    echo "      「动态链接」的 x86 Linux 程序；静态程序仍可运行；Windows 程序(wine)不受影响。" >&2
+    ;;
+esac
+exec /opt/fexemu/bin/fex-enter /usr/bin/FEX "$@"

@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl restart systemd-binfmt >/dev/null 2>&1 || true
+fi
+if [ "${1:-}" = "purge" ]; then
+  echo "提示: 各用户的 ~/.wine 与 ~/.local/share/fex-emu 未删除，可自行清理。" >&2
+fi
+exit 0

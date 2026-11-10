@@ -1,0 +1,21 @@
+#!/bin/bash
+echo "FEX-Emu + Wine 环境 ($(uname -m) / $(uname -n))  状态:"
+echo "  沙箱根文件系统 : /opt/fexemu/chroot  (Ubuntu 22.04 arm64)"
+echo "  共享目录       : /opt/fexemu/share"
+/opt/fexemu/bin/fex-enter /bin/bash -c '
+  printf "  FEX 版本       : "; dpkg -s fex-emu-armv8.2 2>/dev/null | sed -n "s/^Version: //p"
+  printf "  Wine 版本      : "; wine --version 2>&1 | head -1
+  printf "  x86 模拟后端   : "; ls /usr/lib/wine/aarch64-windows/ | grep -E "fex|box64" | tr "\n" " "; echo
+  printf "  FEX RootFS     : "; ls ~/.local/share/fex-emu/RootFS/ 2>/dev/null | tr "\n" " "; echo
+'
+cat <<TXT
+用法:
+  wine <程序.exe>        运行 Windows 程序 (32/64 位均可, 32 位默认走 FEX)
+  winecfg                Wine 配置界面
+  winetricks             安装 Windows 运行库 (如 vcrun2019, dotnet48)
+  winetricks -q 组件     静默安装组件
+  fexshell               进入 FEX/Wine 沙箱 shell
+  fex <x86程序>          用 FEX 运行 x86/x86_64 Linux 程序
+  fexbash                在 FEX RootFS 中打开 shell
+文档: /opt/fexemu/README.md
+TXT

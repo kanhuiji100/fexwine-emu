@@ -1,0 +1,68 @@
+#!/bin/bash
+# FEX-Emu / Wine 沙箱入口: 在 Ubuntu 22.04 (arm64) 根文件系统中以当前用户运行程序
+set -u
+CHROOT=${FEXEMU_CHROOT:-/opt/fexemu/chroot}
+uid=$(id -u); user=$(id -un)
+: "${HOME:=$(getent passwd "$uid" | cut -d: -f6)}"
+: "${XDG_RUNTIME_DIR:=/run/user/$uid}"
+: "${LANG:=zh_CN.UTF-8}"
+: "${LANGUAGE:=zh_CN:zh}"
+: "${HODLL:=libwow64fex.dll}"     # 32 位 Windows 程序使用 FEX 后端
+
+# 显示自动探测：只有确认「X socket 存在」且「认证可行」才设置 DISPLAY，
+# 否则用空显示（headless），避免 Wine 在无会话/无 Xauthority 时卡在 wine.inf 安装。
+if [ "${FEXEMU_NO_DISPLAY:-0}" = "1" ]; then
+  DISPLAY=""
+else
+  : "${DISPLAY:=:0}"
+  if [ "${FEXEMU_FORCE_DISPLAY:-0}" != "1" ]; then
+    dnum=${DISPLAY##*:}; dnum=${dnum%%.*}
+    if [ ! -e "/tmp/.X11-unix/X$dnum" ]; then
+      DISPLAY=""
+    elif pgrep -a -x Xorg 2>/dev/null | grep -q -- ' -auth ' || \
+         pgrep -a -x Xwayland 2>/dev/null | grep -q -- ' -auth '; then
+      # X 服务要求 cookie 认证：用户没有可用的 Xauthority 就视为不可用
+      if [ -z "${XAUTHORITY:-}" ] && [ ! -e "$HOME/.Xauthority" ]; then
+        DISPLAY=""
+      fi
+    fi
+  fi
+fi
+
+# 工作目录：仅当位于沙箱已挂载目录(或其子目录)时才保留
+WD=$PWD
+case "$WD" in
+  /home|/home/*|/tmp|/tmp/*|/run|/run/*|/media|/media/*|/mnt|/mnt/*|/opt/fexemu/share|/opt/fexemu/share/*) ;;
+  *) WD=$HOME ;;
+esac
+[ -d "$WD" ] || WD=$HOME
+
+OPTS=(
+  --bind "$CHROOT" /
+  --bind /home /home
+  --bind /tmp /tmp
+  --bind /run /run
+  --bind /media /media
+  --bind /mnt /mnt
+  --bind /opt/fexemu/share /opt/fexemu/share
+  --dev-bind /dev /dev
+  --proc /proc
+  --ro-bind /sys /sys
+  --ro-bind /usr/share/fonts /opt/hostfonts
+  --setenv HOME "$HOME"
+  --setenv USER "$user"
+  --setenv LOGNAME "$user"
+  --setenv DISPLAY "$DISPLAY"
+  --setenv XDG_RUNTIME_DIR "$XDG_RUNTIME_DIR"
+  --setenv LANG "$LANG"
+  --setenv LANGUAGE "$LANGUAGE"
+  --setenv HODLL "$HODLL"
+  --setenv PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  --chdir "$WD"
+)
+for v in WINEPREFIX WINEARCH HODLL64 XAUTHORITY FEX_ROOTFS FEX_APP_DATA_LOCATION \
+         WINEDLLOVERRIDES WINEDEBUG DXVK_HUD WINEESYNC PULSE_SERVER; do
+  eval "val=\${$v:-}"
+  [ -n "$val" ] && OPTS+=(--setenv "$v" "$val")
+done
+exec bwrap "${OPTS[@]}" -- "$@"

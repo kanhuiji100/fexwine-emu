@@ -1,0 +1,7 @@
+#!/bin/sh
+# fexwine: 沙箱内用来打开 URL/HTML 的浏览器包装（供 Wine 的 winebrowser 调用）
+# 强制 X11 后端：沙箱里 XDG_RUNTIME_DIR 指向宿主的 Wayland socket，
+# 不指定时 GTK 可能选到 Wayland 后端，导致窗口创建失败(BadWindow)。
+export GDK_BACKEND=x11
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+exec surf "$@"

@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""fexwine-launcher — 为 Windows 程序(.exe)创建开始菜单 / 桌面启动器
+
+用法:
+  fexwine-launcher                          # 打开图形界面
+  fexwine-launcher --exe /path/app.exe      # 直接创建（命令行模式）
+  fexwine-launcher --exe app.exe --name 我的程序 --args "-windowed" --terminal
+"""
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+APPID = "fexwine"
+TOOL_NAME = "创建 Windows 程序启动器"
+WINE_WRAPPER = "/usr/local/bin/fexwine"
+ICON_NAME = "fexwine"
+# 沙箱(见 /opt/fexemu/bin/fex-enter)能看到的主机目录
+VISIBLE_PREFIXES = ("/home/", "/tmp/", "/media/", "/mnt/", "/opt/fexemu/share/")
+ICON_DIR = "/usr/share/icons/hicolor/128x128/apps"
+
+
+def home():
+    return os.path.expanduser("~")
+
+
+def desktop_dir():
+    try:
+        out = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True,
+                             text=True, timeout=5).stdout.strip()
+        if out and os.path.isdir(out):
+            return out
+    except Exception:
+        pass
+    for cand in ("桌面", "Desktop"):
+        p = os.path.join(home(), cand)
+        if os.path.isdir(p):
+            return p
+    return os.path.join(home(), "Desktop")
+
+
+def apps_dir():
+    d = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(home(), ".local", "share"),
+                     "applications")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def visible_in_sandbox(path):
+    p = os.path.abspath(path)
+    return any(p == x.rstrip("/") or p.startswith(x) for x in VISIBLE_PREFIXES)
+
+
+def sanitize(name):
+    n = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._-]+", "-", (name or "").strip())
+    return n.strip(".-") or "windows-app"
+
+
+def _quote(arg):
+    """按 .desktop Exec 规则引用参数"""
+    arg = arg.replace("%", "%%")
+    arg = re.sub(r'([`"$\\])', r"\\\1", arg)
+    return '"%s"' % arg
+
+
+def build_entry(exe, name, args="", workdir="", icon=ICON_NAME, prefix="", terminal=False):
+    exe = os.path.abspath(os.path.expanduser(exe))
+    if not name:
+        name = os.path.splitext(os.path.basename(exe))[0]
+    if not workdir:
+        workdir = os.path.dirname(exe)
+    if icon and os.path.sep in icon and os.path.isfile(icon):
+        icon = os.path.abspath(icon)          # 用户选的图标文件用绝对路径
+
+    cmd = []
+    if prefix:
+        cmd.append("env")
+        cmd.append("WINEPREFIX=" + (_quote(prefix) if re.search(r"[ \t%]", prefix) else prefix))
+    cmd.append(WINE_WRAPPER)
+    cmd.append(_quote(exe))
+    if args and args.strip():
+        cmd.append(args.strip())
+
+    lines = [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Version=1.0",
+        "Name=" + name,
+        "Comment=通过 FEX-Emu/Wine 运行 " + os.path.basename(exe),
+        "Exec=" + " ".join(cmd),
+        "Icon=" + (icon or ICON_NAME),
+        "Terminal=" + ("true" if terminal else "false"),
+        "Categories=Wine;Utility;",
+        "StartupNotify=true",
+        "X-FEXWine-Target=" + exe,
+    ]
+    if workdir and os.path.isdir(workdir):
+        lines.insert(7, "Path=" + workdir)
+    return "\n".join(lines) + "\n"
+
+
+def install_launcher(exe, name="", args="", workdir="", icon=ICON_NAME, prefix="",
+                     terminal=False, to_menu=True, to_desktop=True, dry_run=False):
+    exe = os.path.abspath(os.path.expanduser(exe))
+    if not os.path.isfile(exe):
+        raise FileNotFoundError("找不到程序文件: %s" % exe)
+    content = build_entry(exe, name, args, workdir, icon, prefix, terminal)
+    if dry_run:
+        return content, []
+
+    if not name:
+        name = os.path.splitext(os.path.basename(exe))[0]
+    base = "%s-%s.desktop" % (APPID, sanitize(name))
+    created = []
+
+    if to_menu:
+        p = os.path.join(apps_dir(), base)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(p, 0o755)
+        created.append(p)
+        subprocess.run(["update-desktop-database", apps_dir()],
+                       capture_output=True, timeout=30)
+
+    if to_desktop:
+        d = desktop_dir()
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            pass
+        p = os.path.join(d, sanitize(name) + ".desktop")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(p, 0o755)
+        created.append(p)
+        # GNOME/MATE/UKUI 等需要标记为可信才能双击启动
+        if shutil.which("gio"):
+            subprocess.run(["gio", "set", p, "metadata::trusted", "true"],
+                           capture_output=True, timeout=15)
+    return content, created
+
+
+# ---------------------------------------------------------------- GUI (GTK3)
+def run_gui(initial_exe=None):
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk
+
+    class Window(Gtk.Window):
+        def __init__(self):
+            super().__init__(title=TOOL_NAME + " (FEX/Wine)")
+            self.set_border_width(12)
+            self.set_default_size(660, -1)
+            self.set_position(Gtk.WindowPosition.CENTER)
+
+            grid = Gtk.Grid(column_spacing=10, row_spacing=8)
+            self.add(grid)
+            row = 0
+
+            def label(text, tip=None):
+                l = Gtk.Label(label=text, xalign=0)
+                if tip:
+                    l.set_tooltip_text(tip)
+                return l
+
+            def entry(placeholder="", text=""):
+                e = Gtk.Entry()
+                e.set_hexpand(True)
+                e.set_placeholder_text(placeholder)
+                if text:
+                    e.set_text(text)
+                return e
+
+            self.exe_entry = entry("/home/用户/程序/xxx.exe，或点击右侧“浏览…”", initial_exe or "")
+            grid.attach(label("程序 (.exe)"), 0, row, 1, 1)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            box.pack_start(self.exe_entry, True, True, 0)
+            btn = Gtk.Button(label="浏览…")
+            btn.connect("clicked", self.on_browse_exe)
+            box.pack_start(btn, False, False, 0)
+            grid.attach(box, 1, row, 1, 1)
+            row += 1
+
+            self.name_entry = entry("留空则使用程序文件名")
+            grid.attach(label("启动器名称"), 0, row, 1, 1)
+            grid.attach(self.name_entry, 1, row, 1, 1)
+            row += 1
+
+            self.args_entry = entry("可留空，例如：-windowed --fullscreen")
+            grid.attach(label("启动参数"), 0, row, 1, 1)
+            grid.attach(self.args_entry, 1, row, 1, 1)
+            row += 1
+
+            self.wd_entry = entry("留空则使用程序所在目录（有些程序需要）")
+            grid.attach(label("工作目录"), 0, row, 1, 1)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            box.pack_start(self.wd_entry, True, True, 0)
+            btn = Gtk.Button(label="选择…")
+            btn.connect("clicked", self.on_browse_dir)
+            box.pack_start(btn, False, False, 0)
+            grid.attach(box, 1, row, 1, 1)
+            row += 1
+
+            self.icon_entry = entry("留空使用默认图标，或选择 .png/.svg/.xpm", "")
+            grid.attach(label("图标"), 0, row, 1, 1)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            box.pack_start(self.icon_entry, True, True, 0)
+            btn = Gtk.Button(label="选择…")
+            btn.connect("clicked", self.on_browse_icon)
+            box.pack_start(btn, False, False, 0)
+            grid.attach(box, 1, row, 1, 1)
+            row += 1
+
+            self.prefix_entry = entry("留空使用默认前缀 ~/.wine（可为该程序单独建一个）", "")
+            grid.attach(label("Wine 前缀"), 0, row, 1, 1)
+            grid.attach(self.prefix_entry, 1, row, 1, 1)
+            row += 1
+
+            self.terminal_check = Gtk.CheckButton(label="该程序是控制台程序（显示终端窗口）")
+            grid.attach(self.terminal_check, 1, row, 1, 1)
+            row += 1
+
+            self.menu_check = Gtk.CheckButton(label="添加到开始菜单")
+            self.menu_check.set_active(True)
+            grid.attach(self.menu_check, 1, row, 1, 1)
+            row += 1
+
+            self.desktop_check = Gtk.CheckButton(label="添加到桌面")
+            self.desktop_check.set_active(True)
+            grid.attach(self.desktop_check, 1, row, 1, 1)
+            row += 1
+
+            hint = Gtk.Label(xalign=0)
+            hint.set_markup("<small>程序需位于沙箱可见目录：/home、/tmp、/media、/mnt、/opt/fexemu/share\n"
+                            "首次启动会自动初始化 Wine 前缀（约 1-3 分钟）</small>")
+            grid.attach(hint, 1, row, 1, 1)
+            row += 1
+
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.set_halign(Gtk.Align.END)
+            cancel = Gtk.Button(label="退出")
+            cancel.connect("clicked", lambda *_: self.destroy())
+            create = Gtk.Button(label="创建启动器")
+            create.connect("clicked", self.on_create)
+            box.pack_start(cancel, False, False, 0)
+            box.pack_start(create, False, False, 0)
+            grid.attach(box, 0, row, 2, 1)
+
+        # --- 文件选择 ---
+        def on_browse_exe(self, *_):
+            d = Gtk.FileChooserDialog(title="选择 Windows 程序", parent=self,
+                                      action=Gtk.FileChooserAction.OPEN)
+            d.add_buttons("取消", Gtk.ResponseType.CANCEL, "选择", Gtk.ResponseType.OK)
+            f = Gtk.FileFilter()
+            f.set_name("Windows 程序 (*.exe)")
+            f.add_pattern("*.exe")
+            f.add_pattern("*.EXE")
+            d.add_filter(f)
+            f2 = Gtk.FileFilter()
+            f2.set_name("所有文件")
+            f2.add_pattern("*")
+            d.add_filter(f2)
+            d.set_current_folder(os.path.join(home(), "下载"))
+            if d.run() == Gtk.ResponseType.OK:
+                self.exe_entry.set_text(d.get_filename())
+                if not self.name_entry.get_text().strip():
+                    self.name_entry.set_text(
+                        os.path.splitext(os.path.basename(d.get_filename()))[0])
+            d.destroy()
+
+        def on_browse_dir(self, *_):
+            d = Gtk.FileChooserDialog(title="选择工作目录", parent=self,
+                                      action=Gtk.FileChooserAction.SELECT_FOLDER)
+            d.add_buttons("取消", Gtk.ResponseType.CANCEL, "选择", Gtk.ResponseType.OK)
+            if d.run() == Gtk.ResponseType.OK:
+                self.wd_entry.set_text(d.get_filename())
+            d.destroy()
+
+        def on_browse_icon(self, *_):
+            d = Gtk.FileChooserDialog(title="选择图标", parent=self,
+                                      action=Gtk.FileChooserAction.OPEN)
+            d.add_buttons("取消", Gtk.ResponseType.CANCEL, "选择", Gtk.ResponseType.OK)
+            f = Gtk.FileFilter()
+            f.set_name("图标 (*.png *.svg *.xpm *.jpg)")
+            for pat in ("*.png", "*.svg", "*.xpm", "*.jpg", "*.jpeg"):
+                f.add_pattern(pat)
+            d.add_filter(f)
+            if d.run() == Gtk.ResponseType.OK:
+                self.icon_entry.set_text(d.get_filename())
+            d.destroy()
+
+        def info(self, text, secondary=""):
+            m = Gtk.MessageDialog(parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+                                  buttons=Gtk.ButtonsType.OK, text=text)
+            if secondary:
+                m.format_secondary_text(secondary)
+            m.run()
+            m.destroy()
+
+        def on_create(self, *_):
+            exe = self.exe_entry.get_text().strip()
+            if not exe:
+                self.info("请先选择要启动的程序 (.exe)")
+                return
+            if not os.path.isfile(os.path.expanduser(exe)):
+                self.info("找不到文件", exe)
+                return
+            warn = ""
+            if not visible_in_sandbox(os.path.expanduser(exe)):
+                warn = ("注意：该文件不在沙箱可见目录（/home、/tmp、/media、/mnt、/opt/fexemu/share），"
+                        "启动可能失败。\n")
+            try:
+                content, created = install_launcher(
+                    exe,
+                    name=self.name_entry.get_text().strip(),
+                    args=self.args_entry.get_text(),
+                    workdir=self.wd_entry.get_text().strip(),
+                    icon=(self.icon_entry.get_text().strip() or ICON_NAME),
+                    prefix=self.prefix_entry.get_text().strip(),
+                    terminal=self.terminal_check.get_active(),
+                    to_menu=self.menu_check.get_active(),
+                    to_desktop=self.desktop_check.get_active(),
+                )
+            except Exception as e:
+                self.info("创建失败", str(e))
+                return
+            self.info("启动器创建完成", warn + "已创建:\n" + "\n".join(created) +
+                      "\n\n若桌面图标显示为“未信任”，右键选择“允许启动”即可。")
+
+    w = Window()
+    w.connect("destroy", Gtk.main_quit)
+    w.show_all()
+    Gtk.main()
+
+
+def run_zenity(initial_exe=None):
+    """没有 PyGObject 时用 zenity 的简易流程"""
+    def run(*args):
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, timeout=300)
+            return r.stdout.strip() if r.returncode == 0 else None
+        except Exception:
+            return None
+
+    exe = initial_exe or run("zenity", "--file-selection", "--title=选择 Windows 程序",
+                             "--file-filter=Windows 程序 | *.exe")
+    if not exe:
+        return 1
+    form = run("zenity", "--forms", "--title=创建 Windows 程序启动器",
+               "--text=为 %s 创建启动器" % os.path.basename(exe),
+               "--add-entry=启动器名称", "--add-entry=启动参数",
+               "--add-entry=工作目录", "--add-entry=Wine 前缀(可空)",
+               "--add-entry=图标文件(可空)")
+    if form is None:
+        return 1
+    parts = (form.split("|") + [""] * 5)[:5]
+    cmd = [sys.executable, os.path.abspath(__file__), "--exe", exe]
+    if parts[0]:
+        cmd += ["--name", parts[0]]
+    if parts[1]:
+        cmd += ["--args", parts[1]]
+    if parts[2]:
+        cmd += ["--workdir", parts[2]]
+    if parts[3]:
+        cmd += ["--prefix", parts[3]]
+    if parts[4]:
+        cmd += ["--icon", parts[4]]
+    r = subprocess.run(cmd)
+    run("zenity", "--info", "--text=启动器创建完成" if r.returncode == 0 else "--text=创建失败")
+    return r.returncode
+
+
+def main():
+    ap = argparse.ArgumentParser(description=TOOL_NAME + " (FEX/Wine)")
+    ap.add_argument("--exe", help="目标 Windows 程序路径")
+    ap.add_argument("--name", default="", help="启动器名称（默认取文件名）")
+    ap.add_argument("--args", default="", help="启动参数")
+    ap.add_argument("--workdir", default="", help="工作目录（默认程序所在目录）")
+    ap.add_argument("--icon", default=ICON_NAME, help="图标文件或图标名")
+    ap.add_argument("--prefix", default="", help="Wine 前缀（默认 ~/.wine）")
+    ap.add_argument("--terminal", action="store_true", help="控制台程序，显示终端窗口")
+    ap.add_argument("--no-menu", action="store_true", help="不添加到开始菜单")
+    ap.add_argument("--no-desktop", action="store_true", help="不添加到桌面")
+    ap.add_argument("--print", dest="dry_run", action="store_true", help="只打印 .desktop 内容")
+    args = ap.parse_args()
+
+    if not args.exe:
+        if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            try:
+                import gi  # noqa: F401
+                return run_gui()
+            except Exception:
+                if shutil.which("zenity"):
+                    return run_zenity()
+        print(__doc__)
+        return 1 if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) else 1
+
+    try:
+        content, created = install_launcher(
+            args.exe, name=args.name, args=args.args, workdir=args.workdir,
+            icon=args.icon, prefix=args.prefix, terminal=args.terminal,
+            to_menu=not args.no_menu, to_desktop=not args.no_desktop, dry_run=args.dry_run)
+    except Exception as e:
+        print("错误: %s" % e, file=sys.stderr)
+        return 1
+    if args.dry_run:
+        sys.stdout.write(content)
+    else:
+        if not visible_in_sandbox(args.exe):
+            print("警告: 该程序不在沙箱可见目录(/home、/tmp、/media、/mnt、/opt/fexemu/share)内，"
+                  "启动可能失败", file=sys.stderr)
+        print("已创建启动器:")
+        for p in created:
+            print("  " + p)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

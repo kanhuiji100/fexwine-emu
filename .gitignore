@@ -1,0 +1,20 @@
+# 构建产物
+*.deb
+*.deb.sha256
+/build/
+/dist/
+
+# 运行日志与崩溃转储
+*.log
+hs_err_pid*
+replay_pid*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 临时文件
+*.orig
+*.swp
+.DS_Store

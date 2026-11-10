@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=创建 Windows 程序启动器
+Name[en]=Create Windows Program Launcher
+Comment=为 .exe 程序创建开始菜单与桌面快捷方式（FEX-Emu + Wine）
+Exec=/usr/local/bin/fexwine-launcher
+Icon=fexwine
+Terminal=false
+Categories=Utility;System;

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Wine 配置 (FEX)
+Comment=配置 Wine / Windows 环境
+Exec=/usr/local/bin/winecfg
+Icon=wine
+Terminal=false
+Categories=System;Emulator;

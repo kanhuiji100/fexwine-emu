@@ -1,0 +1,76 @@
+#!/bin/bash
+set -e
+CH=/opt/fexemu/chroot
+[ -d "$CH" ] || exit 0
+
+if ! command -v bwrap >/dev/null 2>&1; then
+  echo "fexwine-emu: 警告: 未找到 bubblewrap(bwrap)。请执行: apt-get install -y bubblewrap" >&2
+fi
+
+# 沙箱内的用户/组与主机保持一致（决定 Wine 里的用户名与家目录映射）
+for f in passwd group; do
+  [ -f "/etc/$f" ] && cp -L "/etc/$f" "$CH/etc/$f"
+done
+# 网络 / 时区
+[ -e /etc/resolv.conf ] && cp -L /etc/resolv.conf "$CH/etc/resolv.conf" || true
+[ -e /etc/localtime ] && cp -L /etc/localtime "$CH/etc/localtime" || true
+# 共享目录（任意用户可放 .exe）
+mkdir -p /opt/fexemu/share && chmod 1777 /opt/fexemu/share
+# binfmt_misc：x86/x86_64 ELF -> FEX，Windows PE(.exe) -> wine
+# 注意：部分发行版(如银河麒麟 V10)的 proc-sys-fs-binfmt_misc.automount 是 static/inactive，
+# 开机不会挂载 binfmt_misc，systemd-binfmt 会以
+# "Failed to add binary format: No such file or directory" 失败，
+# 导致 ./app.exe、透明执行 x86 ELF 全部失效。这里显式兜底。
+if [ -d /proc/sys/fs ] && [ ! -e /proc/sys/fs/binfmt_misc/register ]; then
+  modprobe binfmt_misc >/dev/null 2>&1 || true
+  mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc >/dev/null 2>&1 || true
+fi
+# 让开机后也能自动挂载（nofail，挂不上也不会影响启动）
+if [ -f /etc/fstab ] && ! grep -q '[[:space:]]/proc/sys/fs/binfmt_misc[[:space:]]' /etc/fstab; then
+  echo 'none /proc/sys/fs/binfmt_misc binfmt_misc defaults,nofail 0 0' >> /etc/fstab
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl restart systemd-binfmt >/dev/null 2>&1 || true
+fi
+# 注册结果自检
+if [ -e /proc/sys/fs/binfmt_misc/register ]; then
+  for fmt in fex-x86_64 fex-i386 fexwine; do
+    [ -e "/proc/sys/fs/binfmt_misc/$fmt" ] || echo "fexwine-emu: 警告: binfmt 格式 $fmt 未注册" >&2
+  done
+fi
+# 系统级 .exe 默认用 fexwine 打开
+python3 - <<'PY' 2>/dev/null || true
+import os
+p = '/etc/xdg/mimeapps.list'
+key = 'application/x-ms-dos-executable=fexwine.desktop'
+lines = []
+if os.path.exists(p):
+    lines = open(p, encoding='utf-8', errors='replace').read().splitlines()
+if key not in lines:
+    if '[Default Applications]' in lines:
+        lines.insert(lines.index('[Default Applications]') + 1, key)
+    else:
+        lines += ['[Default Applications]', key]
+    os.makedirs('/etc/xdg', exist_ok=True)
+    open(p, 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
+PY
+# 已有用户也设置一次
+for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd); do
+  su - "$u" -c 'command -v xdg-mime >/dev/null 2>&1 && xdg-mime default fexwine.desktop application/x-ms-dos-executable' >/dev/null 2>&1 || true
+done
+# 刷新图标缓存与桌面数据库
+command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || true
+
+cat <<'MSG'
+
+FEX-Emu + Wine 环境安装完成。
+  用法: wine 程序.exe   (首次运行会自动初始化 Wine 前缀，约 1-3 分钟)
+        winecfg / winetricks / fexshell / fexemu
+  程序请放在 /home、/tmp、/media、/mnt、/opt/fexemu/share 下。
+  文档: /opt/fexemu/README.md
+  提示: Java 程序默认以 -Xint 运行（规避 FEX 下 JVM JIT 的偶发崩溃），启动会稍慢；
+        需要性能可覆盖: JAVA_TOOL_OPTIONS="-XX:+TieredCompilation" wine 程序.exe
+MSG
+exit 0

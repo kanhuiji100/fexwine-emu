@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+# 结束沙箱内运行的 wine，避免卸载时文件占用
+pkill -f '/opt/fexemu/bin/fex-enter' >/dev/null 2>&1 || true
+pkill -f '/opt/fexemu/chroot' >/dev/null 2>&1 || true
+exit 0

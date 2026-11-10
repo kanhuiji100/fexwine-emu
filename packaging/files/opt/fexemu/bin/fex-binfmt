@@ -1,0 +1,3 @@
+#!/bin/bash
+# binfmt_misc 解释器: 用 FEX-Emu 运行 x86/x86_64 Linux 程序
+exec /opt/fexemu/bin/fex-enter /usr/bin/FEX "$@"

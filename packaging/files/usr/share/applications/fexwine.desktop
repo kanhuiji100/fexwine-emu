@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Wine (FEX) - 运行 Windows 程序
+Name[en]=Wine (FEX)
+Comment=通过 FEX-Emu 运行 Windows 程序 (支持 32/64 位)
+Exec=/usr/local/bin/fexwine %f
+Icon=wine
+Terminal=false
+Categories=System;Emulator;
+MimeType=application/x-ms-dos-executable;application/x-msdownload;application/x-msi;

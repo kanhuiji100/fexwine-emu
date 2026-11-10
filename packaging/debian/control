@@ -1,0 +1,31 @@
+Package: fexwine-emu
+Version: 1.0-4
+Architecture: arm64
+Maintainer: fexwine-emu contributors <kanhuiji100@users.noreply.github.com>
+Installed-Size: 3300000
+Depends: bubblewrap
+Recommends: fonts-wqy-microhei | fonts-noto-cjk
+Section: misc
+Priority: optional
+Homepage: https://github.com/kanhuiji100/fexwine-emu
+Description: FEX-Emu + Wine environment to run 32/64-bit Windows programs on aarch64
+ Contains a self-contained Ubuntu 22.04 (arm64) root filesystem with FEX-Emu 2610
+ and Hangover Wine 11.16 including the FEX emulation backends
+ (libwow64fex.dll for 32-bit x86, libarm64ecfex.dll for 64-bit x86).
+ Everything runs inside a bubblewrap user-namespace sandbox, so no root and no
+ password are needed at runtime, and the host glibc/libstdc++ version does not
+ matter (host glibc 2.31 is fine).
+ .
+ Commands: wine, winecfg, wineboot, wineserver, winetricks, regedit, notepad,
+ msiexec, winedbg, wineconsole, fexshell, fex, fexbash, fexemu, fex-rootfs,
+ fexwine-launcher.
+ .
+ Windows 32-bit and 64-bit programs are supported (PE code is emulated by FEX;
+ the Wine/Unix side is native arm64). Tested on Kylin V10 aarch64 with kernels
+ 5.4.18 and 5.10.97.
+ .
+ This build bundles a WebKitGTK browser so Windows programs can open http(s)
+ URLs via ShellExecute/winebrowser, and ships CJK font aliases generated from
+ WenQuanYi Micro Hei (family names 微软雅黑/宋体/SimSun/Tahoma ...) so Java/Swing
+ programs render Chinese correctly. Java runs with JAVA_TOOL_OPTIONS=-Xint by
+ default to avoid an upstream FEX JVM JIT crash (override if you need speed).

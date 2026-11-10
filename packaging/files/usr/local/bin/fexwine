@@ -1,0 +1,32 @@
+#!/bin/bash
+# FEX-Emu + Wine 启动器（首次运行/前缀丢失时自动初始化，初始化强制无显示以免卡住）
+MARK="${XDG_DATA_HOME:-$HOME/.local/share}/fexemu/.initialized"
+
+# FEX/ARM64EC 下 JVM 的 JIT 代码会偶发访问违例（C1、C2 编译产物都会中招，
+# hs_err_pid*.log 里是 EXCEPTION_ACCESS_VIOLATION，可能只让索引子进程失败，
+# 也可能直接把托盘进程干掉，程序就没反应了）。属上游 Wine ARM64EC/FEX 的问题，
+# Hangover 11.16 未修复。实测：
+#   -XX:-TieredCompilation（等价于只用 C2）无效，真机上仍 3 次连续崩；
+#   -Xint（解释执行，不做 JIT）压测 0/5 崩溃（基线约 1/3~1/2），
+#   实际程序启动只慢约 1/3，因此默认开启；需要性能时可自行覆盖：
+#     JAVA_TOOL_OPTIONS="-XX:+TieredCompilation" wine 程序.exe   或直接 export 别的值
+if [ -z "${JAVA_TOOL_OPTIONS:-}" ]; then
+  export JAVA_TOOL_OPTIONS="-Xint"
+fi
+if [ ! -e "$MARK" ] || [ ! -d "$HOME/.wine" ]; then
+  echo "[fexwine] 首次运行: 正在初始化 Wine 前缀与中文字体映射(约 1-3 分钟)，请稍候..." >&2
+  mkdir -p "$(dirname "$MARK")" 2>/dev/null || true
+  if FEXEMU_NO_DISPLAY=1 timeout 900 /opt/fexemu/bin/fex-enter /usr/bin/wine wineboot -u >/dev/null 2>&1; then
+    FEXEMU_NO_DISPLAY=1 timeout 300 /opt/fexemu/bin/fex-enter /usr/local/bin/wine-fonts.sh >/dev/null 2>&1 || true
+    # 让 Wine 打开 http/https/htmlfile 时调用沙箱内的浏览器：winebrowser 默认只找
+    # xdg-open/firefox/... ，沙箱(Ubuntu chroot)里都没有，会导致 ShellExecute 静默失败
+    # （很多 Java/.NET 程序的主界面就是本地 http 页面，失败时表现为启动后一直卡在加载）
+    FEXEMU_NO_DISPLAY=1 timeout 120 /opt/fexemu/bin/fex-enter /usr/bin/wine \
+      reg add 'HKCU\Software\Wine\WineBrowser' /v Browsers /t REG_SZ \
+      /d '/opt/fexemu/share/bin/fexwine-browser,xdg-open,firefox' /f >/dev/null 2>&1 || true
+    touch "$MARK" 2>/dev/null || true
+  else
+    echo "[fexwine] 警告: Wine 前缀初始化未正常结束；可直接运行 wine，Wine 会自动补全。" >&2
+  fi
+fi
+exec /opt/fexemu/bin/fex-enter /usr/bin/wine "$@"
