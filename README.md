@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/fexwine.png" width="110" alt="fexwine-emu"></p>
+
 # fexwine-emu
 
 在 **aarch64（ARM64）Linux** 上运行 **Windows 32/64 位程序** 的自包含运行环境。
