@@ -8,7 +8,7 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `ZipStress.java` | 多线程解压 + 类加载 + 反射，压测 JVM JIT 崩溃（见 `docs/troubleshooting.md`） |
+| `ZipStress.java` | 多线程解压 + 类加载 + 反射，压测 JVM JIT 崩溃（见 [`../docs/troubleshooting.md`](../docs/troubleshooting.md)） |
 | `FontProbe.java` / `FontProbe2.java` | 枚举 Java 可见字体族，确认 `微软雅黑`/`宋体` 等是否被解析到 |
 | `FontTest.java` | 用指定字体名渲染中文，输出图像，判断是否缺字形 |
 | `TrayMenuTest.java` / `TrayMenuFrame.java` | Swing 托盘/右键菜单复现工具，验证中文菜单显示 |

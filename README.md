@@ -85,6 +85,16 @@ chmod +x app.exe && ./app.exe # 透明执行（文件管理器双击不需要执
 * `winetricks vcrun2019` 的 x64 安装包可能返回 1（Wine 兼容性问题），32 位运行库正常。
 * 中文字体由文泉驿改名而来，字形与真正的微软雅黑/宋体不同，仅保证「按名字能解析到中文字形」。
 
+## 截图
+
+| 32 位 Wine 记事本（中文菜单正常） | 图形化启动器 |
+| --- | --- |
+| ![记事本](docs/images/notepad32_fonts.png) | ![启动器](docs/images/fexwine-launcher-gui.png) |
+
+| Wine 配置 | 无头模式（Xvfb）下的 32 位程序 |
+| --- | --- |
+| ![winecfg](docs/images/winecfg.png) | ![headless](docs/images/notepad32_m2_headless.png) |
+
 ## 项目结构
 
 ```
